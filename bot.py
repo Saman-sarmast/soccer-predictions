@@ -245,7 +245,7 @@ def main():
         logging.error("توکن ربات تنظیم نشده!")
         return
     
-    updater = Updater(BOT_TOKEN, use_context=True)
+    updater = Updater(BOT_TOKEN)  # حذف use_context=True
     dp = updater.dispatcher
     
     dp.add_handler(CommandHandler("start", start))
