@@ -1,7 +1,8 @@
 import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import ContextTypes
 import sqlite3
 import requests
 import json
@@ -72,7 +73,7 @@ def subscribe_menu():
     return InlineKeyboardMarkup(keyboard)
 
 # دستورات
-def start(update: Update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
 🤖 **خوش آمدید به ربات پیش‌بینی آور ۲.۵** ⚽
 
@@ -81,26 +82,26 @@ def start(update: Update, context):
 
 👇 برای شروع از دکمه‌های زیر استفاده کنید:
     """
-    update.message.reply_text(welcome_text, reply_markup=main_menu())
+    await update.message.reply_text(welcome_text, reply_markup=main_menu())
 
-def button_handler(update: Update, context):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
     
     if query.data == 'predict':
-        predict_command(update, context)
+        await predict_command(update, context)
     elif query.data == 'subscribe':
-        subscribe_command(update, context)
+        await subscribe_command(update, context)
     elif query.data == 'about':
-        about_command(update, context)
+        await about_command(update, context)
     elif query.data == 'support':
-        support_command(update, context)
+        await support_command(update, context)
     elif query.data in ['sub_1day', 'sub_30day']:
-        payment_command(update, context, query.data)
+        await payment_command(update, context, query.data)
     elif query.data == 'back_main':
-        query.edit_message_text("منوی اصلی:", reply_markup=main_menu())
+        await query.edit_message_text("منوی اصلی:", reply_markup=main_menu())
 
-def predict_command(update: Update, context):
+async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     if not check_subscription(query.from_user.id):
@@ -117,13 +118,13 @@ def predict_command(update: Update, context):
             [InlineKeyboardButton("💳 خرید اشتراک", callback_data='subscribe')],
             [InlineKeyboardButton("🔙 بازگشت", callback_data='back_main')]
         ]
-        query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         prediction_manager = PredictionManager()
         predictions_text = prediction_manager.get_today_predictions()
-        query.edit_message_text(predictions_text, reply_markup=main_menu())
+        await query.edit_message_text(predictions_text, reply_markup=main_menu())
 
-def subscribe_command(update: Update, context):
+async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     text = """
 💎 **پلن‌های اشتراک:**
@@ -133,9 +134,9 @@ def subscribe_command(update: Update, context):
 
 💰 **پرداخت با TON یا USDT**
     """
-    query.edit_message_text(text, reply_markup=subscribe_menu())
+    await query.edit_message_text(text, reply_markup=subscribe_menu())
 
-def about_command(update: Update, context):
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     text = """
 🤖 **درباره ربات Over 2.5**
@@ -149,9 +150,9 @@ def about_command(update: Update, context):
 
 💎 **برای شروع اشتراک خود را انتخاب کنید**
     """
-    query.edit_message_text(text, reply_markup=main_menu())
+    await query.edit_message_text(text, reply_markup=main_menu())
 
-def support_command(update: Update, context):
+async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     text = """
 🎫 **پشتیبانی**
@@ -161,9 +162,9 @@ def support_command(update: Update, context):
 
 ⏰ پاسخگویی ۲۴ ساعته
     """
-    query.edit_message_text(text, reply_markup=main_menu())
+    await query.edit_message_text(text, reply_markup=main_menu())
 
-def payment_command(update: Update, context, plan_type):
+async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE, plan_type):
     query = update.callback_query
     
     plans = {
@@ -191,7 +192,7 @@ def payment_command(update: Update, context, plan_type):
     keyboard = [
         [InlineKeyboardButton("🔙 بازگشت", callback_data='subscribe')]
     ]
-    query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 def check_subscription(user_id):
     """بررسی وضعیت اشتراک کاربر"""
@@ -207,14 +208,15 @@ def main():
         logging.error("توکن ربات تنظیم نشده!")
         return
     
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
+    # ساخت اپلیکیشن با نسخه جدید
+    application = Application.builder().token(BOT_TOKEN).build()
     
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(button_handler))
+    # اضافه کردن هندلرها
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_handler))
     
-    updater.start_polling()
-    updater.idle()
+    # اجرای ربات
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
