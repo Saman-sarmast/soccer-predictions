@@ -1,13 +1,13 @@
 import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
 import sqlite3
 import requests
 import json
 from datetime import datetime
 
-# تنظیمات - توکن از environment variables گرفته میشه
+# تنظیمات
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 GITHUB_PREDICTIONS_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/predictions.json"
 
@@ -79,7 +79,7 @@ def start(update: Update, context):
 🎯 **پیش‌بینی‌های حرفه‌ای مسابقات فوتبال**
 💰 **سیگنال‌های با odds عالی**
 
-💎 **برای شروع روی «دریافت پیش‌بینی امروز» کلیک کنید**
+👇 برای شروع از دکمه‌های زیر استفاده کنید:
     """
     update.message.reply_text(welcome_text, reply_markup=main_menu())
 
@@ -179,13 +179,13 @@ def payment_command(update: Update, context, plan_type):
 
 💎 **روش پرداخت:**
 ۱. مبلغ را به آدرس زیر واریز کنید:
-`UQD-jmuwkZ9hlKiu84uGK8fv-QUFF2T9pkQ6gzNcWlqCsT-b`
+`YOUR_WALLET_ADDRESS`
 
 ۲. رسید پرداخت را برای پشتیبانی ارسال کنید
 
 ۳. پس از تایید، اشتراک شما فعال میشود
 
-📞 پشتیبانی: @Over25Predict_supportBot
+📞 پشتیبانی: @YourSupportUsername
     """
     
     keyboard = [
@@ -207,11 +207,11 @@ def main():
         logging.error("توکن ربات تنظیم نشده!")
         return
     
-    updater = Updater(BOT_TOKEN)
+    updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
     
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(button_handler, pattern='.*'))
+    dp.add_handler(CallbackQueryHandler(button_handler))
     
     updater.start_polling()
     updater.idle()
