@@ -1,8 +1,8 @@
 import os
 import logging
-import asyncio
-import aiohttp
 import sqlite3
+import requests
+import time
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
@@ -23,41 +23,41 @@ c.execute('''CREATE TABLE IF NOT EXISTS payments
               tx_hash TEXT, status TEXT, created_date TIMESTAMP)''')
 
 class TONPaymentChecker:
-    async def check_payment(self, user_id: int, amount: float):
+    def check_payment(self, user_id: int, amount: float):
         """بررسی پرداخت کاربر از TON API"""
         try:
-            async with aiohttp.ClientSession() as session:
-                url = f"{TON_API_URL}getTransactions?address={YOUR_TON_ADDRESS}&limit=20"
-                async with session.get(url) as response:
-                    data = await response.json()
+            # دریافت تراکنش‌های اخیر
+            url = f"{TON_API_URL}getTransactions?address={YOUR_TON_ADDRESS}&limit=20"
+            response = requests.get(url)
+            data = response.json()
+            
+            for tx in data.get('result', []):
+                tx_value = int(tx['in_msg']['value']) / 10**9
+                tx_comment = tx['in_msg'].get('message', '')
+                tx_hash = tx['transaction_id']['hash']
+                
+                # تحمل ۰.۵ TON اختلاف (بدون اطلاع به کاربر)
+                if (abs(tx_value - amount) <= 0.5 and  
+                    (str(user_id) in tx_comment or tx_comment == '')):
                     
-                    for tx in data.get('result', []):
-                        tx_value = int(tx['in_msg']['value']) / 10**9
-                        tx_comment = tx['in_msg'].get('message', '')
-                        tx_hash = tx['transaction_id']['hash']
+                    # چک کردن duplicate
+                    c.execute("SELECT id FROM payments WHERE tx_hash = ?", (tx_hash,))
+                    if not c.fetchone():
+                        # ذخیره پرداخت
+                        c.execute("INSERT INTO payments (user_id, amount, tx_hash, status, created_date) VALUES (?, ?, ?, ?, ?)",
+                                 (user_id, tx_value, tx_hash, 'completed', datetime.now()))
                         
-                        # تحمل ۰.۵ TON اختلاف (بدون اطلاع به کاربر)
-                        if (abs(tx_value - amount) <= 0.5 and  
-                            (str(user_id) in tx_comment or tx_comment == '')):
+                        # فعال‌سازی اشتراک
+                        if amount == 3:  # ۱ روزه
+                            end_date = datetime.now() + timedelta(days=1)
+                        else:  # ۱ ماهه
+                            end_date = datetime.now() + timedelta(days=30)
                             
-                            # چک کردن duplicate
-                            c.execute("SELECT id FROM payments WHERE tx_hash = ?", (tx_hash,))
-                            if not c.fetchone():
-                                # ذخیره پرداخت
-                                c.execute("INSERT INTO payments (user_id, amount, tx_hash, status, created_date) VALUES (?, ?, ?, ?, ?)",
-                                         (user_id, tx_value, tx_hash, 'completed', datetime.now()))
-                                
-                                # فعال‌سازی اشتراک
-                                if amount == 3:  # ۱ روزه
-                                    end_date = datetime.now() + timedelta(days=1)
-                                else:  # ۱ ماهه
-                                    end_date = datetime.now() + timedelta(days=30)
-                                    
-                                c.execute("INSERT OR REPLACE INTO users (user_id, username, subscription_end) VALUES (?, ?, ?)",
-                                         (user_id, "user", end_date.strftime('%Y-%m-%d')))
-                                conn.commit()
-                                return True
-                    return False
+                        c.execute("INSERT OR REPLACE INTO users (user_id, username, subscription_end) VALUES (?, ?, ?)",
+                                 (user_id, "user", end_date.strftime('%Y-%m-%d')))
+                        conn.commit()
+                        return True
+            return False
         except Exception as e:
             logging.error(f"خطا در بررسی پرداخت: {e}")
             return False
@@ -192,7 +192,7 @@ def payment_command(update: Update, context: CallbackContext, plan_type):
     
     query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def check_payment_command(update: Update, context: CallbackContext, plan_type):
+def check_payment_command(update: Update, context: CallbackContext, plan_type):
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -205,7 +205,7 @@ async def check_payment_command(update: Update, context: CallbackContext, plan_t
     
     # بررسی پرداخت
     payment_checker = TONPaymentChecker()
-    payment_received = await payment_checker.check_payment(user_id, plan['price'])
+    payment_received = payment_checker.check_payment(user_id, plan['price'])
     
     if payment_received:
         text = f"""
