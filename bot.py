@@ -1,73 +1,79 @@
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from telegram.ext import ContextTypes
+import asyncio
+import aiohttp
 import sqlite3
-import requests
-import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # تنظیمات
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-GITHUB_PREDICTIONS_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/predictions.json"
+TON_API_URL = "https://toncenter.com/api/v2/"
+YOUR_TON_ADDRESS = "UQAtexOWAeOYuq8mUf2HNgJ3gsBBKpqk29svAyHw5U-pbKCX"
 
 # دیتابیس
 conn = sqlite3.connect('subscriptions.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS users
-             (user_id INTEGER PRIMARY KEY, username TEXT, subscription_end DATE, plan TEXT)''')
+             (user_id INTEGER PRIMARY KEY, username TEXT, subscription_end DATE)''')
+c.execute('''CREATE TABLE IF NOT EXISTS payments
+             (id INTEGER PRIMARY KEY, user_id INTEGER, amount REAL, 
+              tx_hash TEXT, status TEXT, created_date TIMESTAMP)''')
 
-class PredictionManager:
-    def get_today_predictions(self):
-        """دریافت پیش‌بینی‌های امروز از گیت‌هاب"""
+class TONPaymentChecker:
+    async def check_payment(self, user_id: int, amount: float):
+        """بررسی پرداخت کاربر از TON API"""
         try:
-            response = requests.get(GITHUB_PREDICTIONS_URL)
-            predictions_data = response.json()
-            
-            today = datetime.now().strftime("%Y-%m-%d")
-            
-            if today in predictions_data:
-                return self.format_predictions(predictions_data[today])
-            else:
-                return "❌ امروز پیش‌بینی‌ای موجود نیست."
-                
+            async with aiohttp.ClientSession() as session:
+                url = f"{TON_API_URL}getTransactions?address={YOUR_TON_ADDRESS}&limit=20"
+                async with session.get(url) as response:
+                    data = await response.json()
+                    
+                    for tx in data.get('result', []):
+                        tx_value = int(tx['in_msg']['value']) / 10**9
+                        tx_comment = tx['in_msg'].get('message', '')
+                        tx_hash = tx['transaction_id']['hash']
+                        
+                        # تحمل ۰.۵ TON اختلاف (بدون اطلاع به کاربر)
+                        if (abs(tx_value - amount) <= 0.5 and  
+                            (str(user_id) in tx_comment or tx_comment == '')):
+                            
+                            # چک کردن duplicate
+                            c.execute("SELECT id FROM payments WHERE tx_hash = ?", (tx_hash,))
+                            if not c.fetchone():
+                                # ذخیره پرداخت
+                                c.execute("INSERT INTO payments (user_id, amount, tx_hash, status, created_date) VALUES (?, ?, ?, ?, ?)",
+                                         (user_id, tx_value, tx_hash, 'completed', datetime.now()))
+                                
+                                # فعال‌سازی اشتراک
+                                if amount == 3:  # ۱ روزه
+                                    end_date = datetime.now() + timedelta(days=1)
+                                else:  # ۱ ماهه
+                                    end_date = datetime.now() + timedelta(days=30)
+                                    
+                                c.execute("INSERT OR REPLACE INTO users (user_id, username, subscription_end) VALUES (?, ?, ?)",
+                                         (user_id, "user", end_date.strftime('%Y-%m-%d')))
+                                conn.commit()
+                                return True
+                    return False
         except Exception as e:
-            return f"⚠️ خطا در دریافت پیش‌بینی‌ها: {str(e)}"
-    
-    def format_predictions(self, today_data):
-        """قالب‌بندی پیش‌بینی‌ها"""
-        text = f"🎯 **پیش‌بینی‌های آور ۲.۵ - {today_data['date']}** ⚽\n\n"
-        
-        for i, pred in enumerate(today_data['predictions'], 1):
-            text += f"━━━━━━━━━━━━━━━━━━━━\n"
-            text += f"🏆 **{pred['league']}**\n"
-            text += f"⚽ {pred['match']}\n"
-            text += f"⏰ {pred['time']} | 📊 اطمینان: {pred['confidence']}%\n"
-            text += f"💰 Odds: {pred['odds']} | {pred['prediction']}\n\n"
-            
-            text += f"📈 **دلایل:**\n"
-            for reason in pred['reasons']:
-                text += f"• {reason}\n"
-            text += f"\n"
-        
-        text += "⚠️ شرط‌بندی با مسئولیت خودتان"
-        return text
+            logging.error(f"خطا در بررسی پرداخت: {e}")
+            return False
 
 # منوها
 def main_menu():
     keyboard = [
         [InlineKeyboardButton("🎯 دریافت پیش‌بینی امروز", callback_data='predict')],
         [InlineKeyboardButton("💳 خرید اشتراک", callback_data='subscribe')],
-        [InlineKeyboardButton("ℹ️ درباره ربات", callback_data='about')],
-        [InlineKeyboardButton("🎫 پشتیبانی", callback_data='support')]
+        [InlineKeyboardButton("ℹ️ راهنمایی", callback_data='help')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 def subscribe_menu():
     keyboard = [
-        [InlineKeyboardButton("۱ روز آزمایشی - ۱۰ دلار", callback_data='sub_1day')],
-        [InlineKeyboardButton("۱ ماه کامل - ۱۰۰ دلار", callback_data='sub_30day')],
+        [InlineKeyboardButton("۱ روز آزمایشی - ۳ TON", callback_data='sub_1day')],
+        [InlineKeyboardButton("۱ ماه کامل - ۳۹ TON", callback_data='sub_30day')],
         [InlineKeyboardButton("🔙 بازگشت", callback_data='back_main')]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -78,7 +84,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🤖 **خوش آمدید به ربات پیش‌بینی آور ۲.۵** ⚽
 
 🎯 **پیش‌بینی‌های حرفه‌ای مسابقات فوتبال**
-💰 **سیگنال‌های با odds عالی**
+💰 **پرداخت اتوماتیک با TON**
 
 👇 برای شروع از دکمه‌های زیر استفاده کنید:
     """
@@ -92,27 +98,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await predict_command(update, context)
     elif query.data == 'subscribe':
         await subscribe_command(update, context)
-    elif query.data == 'about':
-        await about_command(update, context)
-    elif query.data == 'support':
-        await support_command(update, context)
+    elif query.data == 'help':
+        await help_command(update, context)
     elif query.data in ['sub_1day', 'sub_30day']:
         await payment_command(update, context, query.data)
     elif query.data == 'back_main':
         await query.edit_message_text("منوی اصلی:", reply_markup=main_menu())
+    elif query.data.startswith('check_'):
+        plan_type = query.data.replace('check_', '')
+        await check_payment_command(update, context, plan_type)
 
 async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
     
-    if not check_subscription(query.from_user.id):
+    if not check_subscription(user_id):
         text = """
 ❌ **اشتراک شما فعال نیست!**
 
 برای دریافت پیش‌بینی‌های امروز، لطفا ابتدا اشتراک خود را تهیه کنید.
-
-💎 **پلن‌های اشتراک:**
-• ۱ روز آزمایشی: ۱۰ دلار
-• ۳۰ روز کامل: ۱۰۰ دلار
         """
         keyboard = [
             [InlineKeyboardButton("💳 خرید اشتراک", callback_data='subscribe')],
@@ -120,6 +124,8 @@ async def predict_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
+        # دریافت پیش‌بینی‌ها از گیت‌هاب
+        from prediction_manager import PredictionManager
         prediction_manager = PredictionManager()
         predictions_text = prediction_manager.get_today_predictions()
         await query.edit_message_text(predictions_text, reply_markup=main_menu())
@@ -129,70 +135,101 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = """
 💎 **پلن‌های اشتراک:**
 
-• ۱ روز آزمایشی - ۱۰ دلار
-• ۳۰ روز کامل - ۱۰۰ دلار
+• ۱ روز آزمایشی - ۳ TON
+• ۳۰ روز کامل - ۳۹ TON
 
-💰 **پرداخت با TON یا USDT**
+💰 **پرداخت اتوماتیک با TON**
     """
     await query.edit_message_text(text, reply_markup=subscribe_menu())
 
-async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     text = """
-🤖 **درباره ربات Over 2.5**
+📖 **راهنمایی**
 
-🎯 **تخصص:** پیش‌بینی مسابقات فوتبال با تمرکز روی آور ۲.۵ گل
+💳 **روش پرداخت:**
+۱. پلن مورد نظر را انتخاب کنید
+۲. مبلغ TON را به آدرس داده شده واریز کنید
+۳. سیستم به طور خودکار پرداخت را بررسی می‌کند
+۴. اشتراک شما فعال می‌شود
 
-📊 **روش تحلیل:**
-• بررسی آمار گل‌زنی تیم‌ها
-• تاریخچه مسابقات مستقیم
-• وضعیت بازیکنان کلیدی
-
-💎 **برای شروع اشتراک خود را انتخاب کنید**
-    """
-    await query.edit_message_text(text, reply_markup=main_menu())
-
-async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    text = """
-🎫 **پشتیبانی**
-
-📞 برای ارتباط با پشتیبانی:
-@YourSupportUsername
-
-⏰ پاسخگویی ۲۴ ساعته
+⚠️ در صورت مشکل در پرداخت، ۵ دقیقه منتظر بمانید سپس دوباره بررسی کنید
     """
     await query.edit_message_text(text, reply_markup=main_menu())
 
 async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE, plan_type):
     query = update.callback_query
+    user_id = query.from_user.id
     
     plans = {
-        'sub_1day': {'name': '۱ روزه', 'price': 10},
-        'sub_30day': {'name': '۱ ماهه', 'price': 100}
+        'sub_1day': {'name': '۱ روزه', 'price': 3},
+        'sub_30day': {'name': '۱ ماهه', 'price': 39}
     }
     
     plan = plans[plan_type]
+    
     text = f"""
 💳 **خرید اشتراک {plan['name']}**
 
-💰 مبلغ: {plan['price']} دلار
+💰 مبلغ: **دقیقاً {plan['price']} TON**
 
-💎 **روش پرداخت:**
-۱. مبلغ را به آدرس زیر واریز کنید:
-`UQD-jmuwkZ9hlKiu84uGK8fv-QUFF2T9pkQ6gzNcWlqCsT-b`
+🏦 **آدرس TON:**
+`{YOUR_TON_ADDRESS}`
 
-۲. رسید پرداخت را برای پشتیبانی ارسال کنید
+⚠️ **توجه مهم:**
+• فقط **یک تراکنش** با مقدار **دقیق {plan['price']} TON** واریز کنید
+• پرداخت‌های چندتایی تأیید **نمی‌شوند**
+• مبالغ کمتر یا بیشتر **تأیید نمی‌شوند**
 
-۳. پس از تایید، اشتراک شما فعال میشود
-
-📞 پشتیبانی: @Over25Predict_supportBot
+🔄 پس از پرداخت دقیق، روی «بررسی پرداخت» کلیک کنید
     """
     
     keyboard = [
+        [InlineKeyboardButton("🔄 بررسی پرداخت", callback_data=f'check_{plan_type}')],
         [InlineKeyboardButton("🔙 بازگشت", callback_data='subscribe')]
     ]
+    
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def check_payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE, plan_type):
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    plans = {
+        'sub_1day': {'name': '۱ روزه', 'price': 3},
+        'sub_30day': {'name': '۱ ماهه', 'price': 39}
+    }
+    
+    plan = plans[plan_type]
+    
+    # بررسی پرداخت
+    payment_checker = TONPaymentChecker()
+    payment_received = await payment_checker.check_payment(user_id, plan['price'])
+    
+    if payment_received:
+        text = f"""
+✅ **پرداخت شما تأیید شد!**
+
+🎉 اشتراک {plan['name']} شما فعال شد.
+
+اکنون می‌توانید از منوی اصلی پیش‌بینی‌های امروز را دریافت کنید.
+        """
+        await query.edit_message_text(text, reply_markup=main_menu())
+    else:
+        text = f"""
+❌ **پرداختی یافت نشد**
+
+لطفاً:
+۱. مطمئن شوید **دقیقاً {plan['price']} TON** واریز کرده‌اید
+۲. ۵ دقیقه منتظر بمانید (تأخیر شبکه)
+۳. سپس دوباره بررسی کنید
+
+🏦 آدرس: `{YOUR_TON_ADDRESS}`
+        """
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 بررسی مجدد", callback_data=f'check_{plan_type}')],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data='subscribe')]
+        ]))
 
 def check_subscription(user_id):
     """بررسی وضعیت اشتراک کاربر"""
@@ -208,14 +245,11 @@ def main():
         logging.error("توکن ربات تنظیم نشده!")
         return
     
-    # ساخت اپلیکیشن با نسخه جدید
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # اضافه کردن هندلرها
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    # اجرای ربات
     application.run_polling()
 
 if __name__ == '__main__':
