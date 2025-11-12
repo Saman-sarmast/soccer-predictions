@@ -211,7 +211,7 @@ def main():
     dp = updater.dispatcher
     
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(CallbackQueryHandler(button_handler, pattern='.*'))
     
     updater.start_polling()
     updater.idle()
