@@ -180,13 +180,13 @@ async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE, pl
 
 💎 **روش پرداخت:**
 ۱. مبلغ را به آدرس زیر واریز کنید:
-`YOUR_WALLET_ADDRESS`
+`UQD-jmuwkZ9hlKiu84uGK8fv-QUFF2T9pkQ6gzNcWlqCsT-b`
 
 ۲. رسید پرداخت را برای پشتیبانی ارسال کنید
 
 ۳. پس از تایید، اشتراک شما فعال میشود
 
-📞 پشتیبانی: @YourSupportUsername
+📞 پشتیبانی: @Over25Predict_supportBot
     """
     
     keyboard = [
