@@ -5,8 +5,7 @@ import requests
 import time
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
-from telegram.ext import CallbackContext
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
 # تنظیمات
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
